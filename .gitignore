@@ -4,3 +4,5 @@ piezo-test/lib/readme.txt
 piezo-test/.travis.yml
 
 piezo-test/platformio.ini
+
+shutter-timer/lib/readme.txt
