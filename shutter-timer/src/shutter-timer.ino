@@ -21,24 +21,103 @@ A piezo speaker is optional, but nice to get audio feedback that the Arduino
 detected the light pulse.
 
 */
+const byte debugRaw       = false;
+const byte debugState     = false;
 
-const byte lightPin     = 0;
-const byte thresholdPin = 1;
-const byte speakerPin   = 10;
+const byte lightPin       = 0;
+const byte thresholdPin   = 1;
+const byte speakerPin     = 10;
+const int minSamples      = 3;
 
-int lightValue = 0;
-int threshold = 0;
-boolean light = false;
+int lightValue            = 0;
+int threshold             = 0;
+int lightSamples          = 0;
 
-unsigned long startMillis = 0;
+unsigned long startTime   = 0;
+unsigned long endTime     = 0;
 
-float mean     = 0.0;
-float deviance = 0.0;
-int count = 0;
+float mean                = 0.0;
+float deviance            = 0.0;
+int count                 = 0;
+
+enum lightState
+{
+  low,
+  rising,
+  high,
+  falling
+};
+
+lightState state = low;
+
+void calcStats(long duration)
+{
+  float shutter = 1000000.0 / duration;
+
+  count += 1;
+  if(count == 1)
+  {
+    mean = duration;
+  }
+  else
+  {
+    // thanks, Donald Knuth! (TAOCP vol 2, 3rd ed, pg 232 or so I've read)
+    // calculate running mean and deviance.
+    float oldmean = mean;
+    mean += (duration - mean) / count;
+    deviance += (duration - oldmean) * (duration - mean);
+  }
+
+  float avgShutter = 1000000.0 / mean;
+  float stdDevSample = sqrt( (deviance / (count - 1) ) );
+
+  Serial.print("Shutter detected: 1/");
+  Serial.print(shutter);
+  Serial.print("s (");
+  Serial.print(duration);
+  Serial.print("µs)");
+
+  Serial.print("    Avg (");
+  Serial.print(count);
+  Serial.print(") 1/");
+  Serial.print(avgShutter);
+  Serial.print("s (");
+  Serial.print(mean);
+  Serial.print("µs) σ:");
+  Serial.println(stdDevSample);
+}
+
+void debugRawValues()
+{
+  Serial.print("    DEBUG: light [");
+  Serial.print(lightValue);
+  Serial.print("] threshold [");
+  Serial.print(threshold);
+  Serial.println("]");
+}
+
+void debugStateInfo()
+{
+  switch (state)
+  {
+    case low:
+      Serial.println ("DEBUG state: LOW");
+      break;
+    case rising:
+      Serial.println ("DEBUG state: RISING");
+      break;
+    case high:
+      Serial.println ("DEBUG state: HIGH");
+      break;
+    case falling:
+      Serial.println ("DEBUG state: FALLING");
+      break;
+  }
+}
 
 void setup()
 {
-  Serial.begin(9600);
+  Serial.begin(19200);
   pinMode(speakerPin, OUTPUT);
   for (int i = 0; i < 5; i++)
   {
@@ -55,60 +134,54 @@ void loop()
   lightValue = analogRead(lightPin);
   threshold  = analogRead(thresholdPin);
 
-  if(lightValue > threshold) // beginning of shutter event
-  {
-    if (light == false)
-    {
-      startMillis = millis();
-      light = true;
-      digitalWrite(speakerPin, HIGH); // start speaker
-    }
-  }
-  else // lightValue < threshold
-  {
-    if(light == true) // are we seeing the end of the shutter event?
-    {
-      unsigned long duration = millis() - startMillis;
+  if (debugRaw)   { debugRawValues(); }
+  if (debugState) { debugStateInfo(); }
 
-      // shutter values are generally shown on cameras as 1/x s
-      float shutter = 1000.0 / duration;
-
-      count += 1;
-      if(count == 1)
+  switch (state)
+  {
+    case low:
+      if(lightValue > threshold)
       {
-        mean = duration;
+        state = rising;
+        lightSamples++;
+      }
+      break;
+    case rising:
+      if(lightValue > threshold)
+      {
+        lightSamples++;
+        if(lightSamples >= minSamples)
+        {
+          startTime = micros();
+          digitalWrite(speakerPin, HIGH); // start speaker
+          state = high;
+          lightSamples = 0;
+        }
       }
       else
       {
-        // thanks, Donald Knuth! (TAOCP vol 2, 3rd ed, pg 232 or so I've read)
-        float oldmean = mean;
-        mean += (duration - mean) / count;
-        deviance += (duration - oldmean) * (duration - mean);
+        state = low;
       }
-
-      float avgShutter = 1000.0 / mean;
-      float stdDevSample = sqrt( (deviance / (count - 1) ) );
-
-      Serial.print("Shutter detected: 1/");
-      Serial.print(shutter);
-      Serial.print("s (");
-      Serial.print(duration);
-      Serial.print("ms)");
-
-      Serial.print("    Avg (");
-      Serial.print(count);
-      Serial.print(") 1/");
-      Serial.print(avgShutter);
-      Serial.print("s (");
-      Serial.print(mean);
-      Serial.print("ms) σ:");
-      Serial.println(stdDevSample);
-
-      light = false;
-
-
+      break;
+    case high:
+    if(lightValue < threshold)
+    {
+      state = falling;
+      lightSamples++;
     }
-    digitalWrite(speakerPin, LOW); // stop speaker
+    break;
+  case falling:
+    if(lightValue < threshold)
+    {
+      lightSamples++;
+      if(lightSamples >= minSamples)
+      {
+        endTime = micros();
+        digitalWrite(speakerPin, LOW); // stop speaker
+        state = low;
+        lightSamples = 0;
+        calcStats(endTime - startTime);
+      }
+    }
   }
-
 }
