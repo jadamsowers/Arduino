@@ -3,12 +3,39 @@ A simple mechanism to test the shutters of old cameras
 Requires a light source at one end of the camera and a photoresistor / LDR
 on the other end.
 
-Requires a simple voltage divider circuit:
-+5V ---/\/\/\/---+---/\/\/\/---- ground
-        LDR      |     10kΩ
-                 |
-          Arduino pin A0
-             (analog)
+
+
+          +5V
+           |
+  \        |
+   \|   -------
+\  -\  /    |  \
+ \|   /     |   \
+ -\  /      |    \
+     |    |/     |
+     |    |      |   phototransistor
+     |    |\     |
+     \      |    /
+      \     |   /
+       \    |  /
+        -------
+           |
+           |
+           +-------- Analog pin 0
+           |
+          <|  -/
+           |> /|
+          <| /
+           |>
+          </         potentiometer
+          /|>
+         /<|
+        /  |>
+           |
+           |
+         -----       ground
+          ---
+
 
 Also requires a potentiometer to set the light threshold value:
 +5V ----------/\/\/\/----------- ground
@@ -74,17 +101,17 @@ void calcStats(long duration)
   Serial.print("Shutter detected: 1/");
   Serial.print(shutter);
   Serial.print("s (");
-  Serial.print(duration);
-  Serial.print("µs)");
+  Serial.print(duration / 1000);
+  Serial.print("ms)");
 
   Serial.print("    Avg (");
   Serial.print(count);
   Serial.print(") 1/");
   Serial.print(avgShutter);
   Serial.print("s (");
-  Serial.print(mean);
-  Serial.print("µs) σ:");
-  Serial.println(stdDevSample);
+  Serial.print(mean / 1000 );
+  Serial.print("ms) σ:");
+  Serial.println(stdDevSample / 1000);
 }
 
 void debugRawValues()
@@ -137,10 +164,30 @@ void loop()
   if (debugRaw)   { debugRawValues(); }
   if (debugState) { debugStateInfo(); }
 
+  /*
+    Simple state engine
+            _______________
+           /               \
+          /                 \
+    _____/                   \_____
+     ^   ^        ^        ^   ^
+     |   |        |        |   |
+    (a) (b)      (c)      (d) (a)
+
+    (a) low (signal below threshold)
+    (b) rising (waiting to see {minSamples} consecutive samples > threshold)
+    (c) high (signal above threshold)
+    (d) falling (waiting to see {minSamples} consecutive samples < threshold)
+
+    If the device doesn't see {minSamples} in the right direction it reverts
+    to the previous state.
+
+  */
+
   switch (state)
   {
     case low:
-      if(lightValue > threshold)
+      if(lightValue > threshold) // see a signal, change state to rising
       {
         state = rising;
         lightSamples++;
@@ -158,9 +205,10 @@ void loop()
           lightSamples = 0;
         }
       }
-      else
+      else // need to see several samples to change state
       {
         state = low;
+        lightSamples = 0;
       }
       break;
     case high:
@@ -182,6 +230,11 @@ void loop()
         lightSamples = 0;
         calcStats(endTime - startTime);
       }
+    }
+    else // need to see several samples to change state
+    {
+      state = high;
+      lightSamples = 0;
     }
   }
 }
