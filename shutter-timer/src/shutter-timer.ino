@@ -101,7 +101,7 @@ void calcStats(long duration)
   Serial.print("Shutter detected: 1/");
   Serial.print(shutter);
   Serial.print("s (");
-  Serial.print(duration / 1000);
+  Serial.print(duration / 1000.0);
   Serial.print("ms)");
 
   Serial.print("    Avg (");
@@ -109,9 +109,10 @@ void calcStats(long duration)
   Serial.print(") 1/");
   Serial.print(avgShutter);
   Serial.print("s (");
-  Serial.print(mean / 1000 );
+  Serial.print(mean / 1000.0 );
   Serial.print("ms) σ:");
-  Serial.println(stdDevSample / 1000);
+  Serial.print( count == 1 ? 0.0 : stdDevSample / 1000 );
+  Serial.println("ms");
 }
 
 void debugRawValues()
