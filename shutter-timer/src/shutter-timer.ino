@@ -4,60 +4,45 @@ Requires a light source at one end of the camera and a photoresistor / LDR
 on the other end.
 
 
-
-          +5V
-           |
-  \        |
-   \|   -------
-\  -\  /    |  \
- \|   /     |   \
- -\  /      |    \
-     |    |/     |
-     |    |      |   phototransistor
-     |    |\     |
-     \      |    /
-      \     |   /
-       \    |  /
-        -------
-           |
-           |
-           +-------- Analog pin 0
-           |
-          <|  -/
-           |> /|
-          <| /
-           |>
-          </         potentiometer
-          /|>
-         /<|
-        /  |>
-           |
-           |
-         -----       ground
-          ---
-
-
-Also requires a potentiometer to set the light threshold value:
-+5V ----------/\/\/\/----------- ground
-                 ^
-                 |
-          Arduino pin A1
-             (analog)
+               +5V
+                |
+  \             |
+   \|    /-------------\
+\  -\   /        |      \
+ \|    /         |       \
+ -\   /          |        \
+      |        |/         |
+      |        |          |   phototransistor
+      |        |\         |
+      \          |        /
+       \         |       /
+        \        |      /
+         \-------------/
+                |
+                |
+  +---/\/\/\/\--+-------- Analog pin 0
+  |    10kΩ
+  |
+-----
+ ---
+ground
 
 A piezo speaker is optional, but nice to get audio feedback that the Arduino
 detected the light pulse.
 
 */
-const byte debugRaw       = false;
-const byte debugState     = false;
+
+// note that enabling the debugs will throw off timing.
+//#define DEBUGRAW
+//#define DEBUGSTATE
 
 const byte lightPin       = 0;
 const byte thresholdPin   = 1;
 const byte speakerPin     = 10;
-const int minSamples      = 3;
+const int minSamples      = 2;
 
 int lightValue            = 0;
-int threshold             = 0;
+int threshold             = 255;
 int lightSamples          = 0;
 
 unsigned long startTime   = 0;
@@ -104,13 +89,13 @@ void calcStats(long duration)
   Serial.print(duration / 1000.0);
   Serial.print("ms)");
 
-  Serial.print("    Avg (");
+  Serial.print("    (");
   Serial.print(count);
   Serial.print(") 1/");
   Serial.print(avgShutter);
-  Serial.print("s (");
+  Serial.print("s µ:");
   Serial.print(mean / 1000.0 );
-  Serial.print("ms) σ:");
+  Serial.print("ms σ:");
   Serial.print( count == 1 ? 0.0 : stdDevSample / 1000 );
   Serial.println("ms");
 }
@@ -122,36 +107,18 @@ void debugRawValues()
   Serial.print("] threshold [");
   Serial.print(threshold);
   Serial.println("]");
-}
-
-void debugStateInfo()
-{
-  switch (state)
-  {
-    case low:
-      Serial.println ("DEBUG state: LOW");
-      break;
-    case rising:
-      Serial.println ("DEBUG state: RISING");
-      break;
-    case high:
-      Serial.println ("DEBUG state: HIGH");
-      break;
-    case falling:
-      Serial.println ("DEBUG state: FALLING");
-      break;
-  }
+  delay(10);
 }
 
 void setup()
 {
-  Serial.begin(19200);
+  Serial.begin(9600);
   pinMode(speakerPin, OUTPUT);
   for (int i = 0; i < 5; i++)
   {
-    digitalWrite(speakerPin, HIGH);
+    digitalWrite(speakerPin, high);
     delay(50);
-    digitalWrite(speakerPin, LOW);
+    digitalWrite(speakerPin, low);
     delay(50);
   }
 
@@ -160,13 +127,14 @@ void setup()
 void loop()
 {
   lightValue = analogRead(lightPin);
-  threshold  = analogRead(thresholdPin);
+  //threshold  = analogRead(thresholdPin);
 
-  if (debugRaw)   { debugRawValues(); }
-  if (debugState) { debugStateInfo(); }
+  #ifdef DEBUGRAW
+    debugRawValues();
+  #endif
 
   /*
-    Simple state engine
+    Simple finite state automaton
             _______________
            /               \
           /                 \
@@ -190,8 +158,11 @@ void loop()
     case low:
       if(lightValue > threshold) // see a signal, change state to rising
       {
-        state = rising;
         lightSamples++;
+        #ifdef DEBUGSTATE
+          Serial.println ("DEBUG state: low->rising");
+        #endif
+        state = rising;
       }
       break;
     case rising:
@@ -201,41 +172,57 @@ void loop()
         if(lightSamples >= minSamples)
         {
           startTime = micros();
-          digitalWrite(speakerPin, HIGH); // start speaker
-          state = high;
+          digitalWrite(speakerPin, high); // start speaker
           lightSamples = 0;
+          #ifdef DEBUGSTATE
+            Serial.println ("DEBUG state: rising->high");
+          #endif
+          state = high;
         }
       }
       else // need to see several samples to change state
       {
-        state = low;
         lightSamples = 0;
+        #ifdef DEBUGSTATE
+          Serial.println ("DEBUG state: rising->low");
+        #endif
+        state = low;
       }
       break;
     case high:
-    if(lightValue < threshold)
-    {
-      state = falling;
-      lightSamples++;
-    }
-    break;
-  case falling:
-    if(lightValue < threshold)
-    {
-      lightSamples++;
-      if(lightSamples >= minSamples)
+      if(lightValue < threshold)
       {
-        endTime = micros();
-        digitalWrite(speakerPin, LOW); // stop speaker
-        state = low;
-        lightSamples = 0;
-        calcStats(endTime - startTime);
+        lightSamples++;
+        #ifdef DEBUGSTATE
+          Serial.println ("DEBUG state: high->falling");
+        #endif
+        state = falling;
       }
-    }
-    else // need to see several samples to change state
-    {
-      state = high;
-      lightSamples = 0;
-    }
+      break;
+    case falling:
+      if(lightValue < threshold)
+      {
+        lightSamples++;
+        if(lightSamples >= minSamples)
+        {
+          endTime = micros();
+          digitalWrite(speakerPin, low); // stop speaker
+          #ifdef DEBUGSTATE
+            Serial.println ("DEBUG state: falling->low");
+          #endif
+          state = low;
+          lightSamples = 0;
+          calcStats(endTime - startTime);
+        }
+      }
+      else // need to see several samples to change state
+      {
+        #ifdef DEBUGSTATE
+          Serial.println ("DEBUG state: falling->high");
+        #endif
+        state = high;
+        lightSamples = 0;
+      }
+      break;
   }
 }
